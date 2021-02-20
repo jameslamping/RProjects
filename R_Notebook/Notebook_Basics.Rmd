@@ -1,0 +1,164 @@
+---
+title: "Introduction to R Notebooks"
+author: "James Lamping"
+output: html_notebook
+---
+
+Welcome to an intro into both R notebooks. R Notebooks is a really neat and interactive way to organize, run and share your code! It combined all the processing ability that the R language and its growing lists of libraries has to offer while also allowing you to instantly generate a publishable document on the web.
+
+We will go over some of the basics of R Notebooks here, but you can find some very useful information on the [Notebooks Cheatsheet](https://rstudio.com/wp-content/uploads/2016/03/rmarkdown-cheatsheet-2.0.pdf).
+
+R Notebooks comprise of two styles of text, inline and "chunks". Inline text ends up working a lot like comments in regular R script. This text is ignored by the R programming language. In fact, what you are reading right now is inline text!
+
+Chunks on the other hand are the lines of script that are interpreted by R. This is your "code" and each chunk acts as its own R environment.
+
+```{r}
+# This is a chunky chunk without any actual code in it. As you can see, chunks normally show as gray blocks of code
+```
+
+##### ... so lets start!
+***
+## Getting Started
+First off, remember that each chunk works as their own environment, so setting the working directory does't really work. You have to set up your notebook using knitr (this is the base language of markdown and notebooks). Most of the time your data will not be in the same location as your R document and you will point your *root directory* to your datafile, but in this case it is. 
+```{r setup, include = TRUE}
+require("knitr")
+opts_knit$set(root.dir = "")
+```
+
+Obviously this isn't very pretty looking and not necessary when trying to make a publishable webpage so we can tell the notebook to not include it in the final HTML document by setting include to FALSE.
+
+Now lets add in our libraries. Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*. We want to include these so that people can see what libraries we are using for our analysis, but sometimes we dont want them to see the extra output letting you know they loaded fine. We hide that by setting results to FALSE.
+```{r, results = FALSE}
+list.of.packages <- c("raster","viridis", "ggplot2","leaflet","rgdal")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+library(raster)
+library(viridis)
+library(ggplot2)
+library(leaflet)
+library(rgdal)
+```
+
+For this intro we will be taking to digital terrain models made from two different methods and comparing them. Lets bring in our two rasters in as objects.
+```{r}
+ow2.dtm <- raster("Data/OW2_als_dtm.tif")
+ow2.nadir.dtm <- raster("Data/OW2_nadir_dtm.tif")
+```
+## Plotting Figures
+Plotting figures in a *Notebook* works just as though you were in a standard R script, with one exception, running one line of code at a time within a chunk sometimes gives you funky results. This is because a chunk is designed to run all at one time. To show this, we have some code below that will plot our DTMs next to each other in one figure. If you went into the chuck and ran one line at a time your par function will not combine the two images. Try running it all at once with the *play* button on the right side of the chunk.
+```{r}
+par(mfrow = c(1,2))
+plot(ow2.dtm, main = "Lidar DTM")
+plot(ow2.nadir.dtm, main = "SfM DTM")
+```
+## Even better visuals
+One really great thing about notebooks is that their output is in HTML. This means that your exported webpage can contain interactive maps! Lets plot one of our DTMs on top of an ESRI basemap using the leaflet library:
+```{r, results = FALSE, message = FALSE}
+library(leaflet)
+pal <- colorNumeric(c("#0C2C84", "#41B6C4", "#FFFFCC"), values(ow2.nadir.dtm),
+  na.color = "transparent")
+leaflet() %>% addProviderTiles(providers$Esri.WorldImagery) %>%
+  addRasterImage(ow2.nadir.dtm, colors = pal, opacity = 0.8) %>%
+  addLegend(pal = pal, values = values(ow2.nadir.dtm),
+    title = "Surface temp")
+```
+
+## Showing off analysis
+The main reason why people use notebooks is to neatly show off how you did some analysis. This means that you can easily format an explination above a chunk and then show some custom functions you have made. Below is a custom function that extracts the values of two raster objects into one dataframe
+
+```{r}
+GetValuesRasters <- function(raster1, raster2, rasterName1, rasterName2){
+  df1 <- data.frame(cbind(getValues(raster1), getValues(raster2)))
+  names(df1) <- c(rasterName1,rasterName2)
+  return(df1)
+}
+dtm.ow2.nadir <- GetValuesRasters(ow2.dtm, ow2.nadir.dtm, "OW2_als", "OW2_sfm_nadir")
+```
+
+We can then generate a function that takes those two sets of values and outputs a whole bunch of statistics. This specific function comes from Riemann et al., 2010 and is useful when trying to describe how well two spatial datasets match.
+```{r}
+#####################################################################
+##accuracy stats function
+gmfr.stats <- function(x,y)
+  { 
+    maxrange<-max(max(x),max(y))  # max value of x and y;
+    minrange<-min(min(x),min(y))  # min value of x and y;
+    rng<-maxrange-minrange        # range of value  ;
+    n<-length(x)                  # number of samples;
+    ssd<-sum((x-y)^2)        				# sum of square difference;
+    msd<-ssd/n 									# mean square difference;
+    xmean<-sum(x)/n            # mean value of x;
+    ymean<-sum(y)/n								# mean value of y;
+    xrange<-range(x)            #range values of x;
+    yrange<-range(y)           # range values of y;
+    xstdev<-sd(x)          #standard deviation values for x;
+    ystdev<-sd(y)            #standard deviation values for y;
+    s_xx<-sum((x-xmean)^2)	   
+    s_yy<-sum((y-ymean)^2) 
+    s_xy<-sum((x-xmean)*(y-ymean))
+    s_xyx<-sum(((x-xmean)+(y-xmean))^2)
+    d<-1-(ssd/s_xyx)								 # Calculating Willmott's Index of Agreement;
+    rsq<-(s_xy)^2/(s_xx*s_yy)							# R-square;
+    spod<-sum((abs(xmean-ymean)+abs(x-xmean))*(abs(xmean-ymean)+abs(y-ymean))) # Sum of potential difference;
+    ac<-1-ssd/spod								# Agreement coefficient;
+    b_yvsx<-sqrt(s_yy/s_xx)						# Estimate of b for GMFR regression y=a+bx;
+    a_yvsx<-ymean-b_yvsx*xmean						# Estimate of a for GMFR regression y=a+bx;
+    b_xvsy<-sqrt(s_xx/s_yy)						# Estimate of b for GMFR regression x=a+by;
+    a_xvsy<-xmean-b_xvsy*ymean						# Estimate of a for GMFR regression x=a+by;
+    yhat<-a_yvsx+b_yvsx*x 							# Prediction of y;  
+    lmfit_map<-lm(yhat~x)  
+    xhat<-a_xvsy+b_xvsy*y	                  			# Prediction of x;
+    spd_uns<-sum(abs(x-xhat)*abs(y-yhat))     			# Unsystematic sum of product-difference;
+    spd_sys<-ssd-spd_uns                   				# Systematic sum of product-difference;
+    ac_uns<-1-spd_uns/spod                    			# Unsystematic agreement coefficient;
+    ac_sys<-1-spd_sys/spod  		                  	# Systematic agreement coefficient;
+    mpd_uns<-spd_uns/n 							# Unsystematic mean product-difference;
+    mpd_sys<-spd_sys/n 							# Systematic mean product-difference;
+    rmsd<-sqrt(msd)								# Root mean of square difference;
+    nrmsd<-rmsd/rng               # Normalized root mean of square difference;
+    rmpd_uns<-sqrt(mpd_uns)						# Unsystematic square root of mean product-difference;
+    rmpd_sys<-sqrt(mpd_sys)						# Systematic square root of mean product-difference;
+    mse_sys<-(sum((x-yhat)^2))/n		# Calculating Willmott's measures of agreement (systematic and unsystematic )
+    mse_uns<-(sum((y-yhat)^2))/n
+    mse<-mse_sys + mse_uns
+    prop_uns<-mpd_uns/msd		# calculating proportion of error that's due to unsystematic differences (scatter)
+    prop_sys<-mpd_sys/msd		# calculating proportion of error that's due to systematic differences (Y could be modeled from X)
+    return(list(lmfit = lmfit_map, ac = list(ac = ac, uns = ac_uns,sys = ac_sys), prop = list(sys = prop_sys, uns = prop_uns),
+                rmsd = rmsd, nrmsd = nrmsd, mse = list(mse = mse, sys = mse_sys, uns = mse_uns), rsq = rsq, yhat = yhat, d = d,maxrange = maxrange,
+                xmean = xmean, ymean = ymean, xrange = xrange, yrange = yrange, xstdev = xstdev, ystdev = ystdev,
+                byvsx = b_yvsx, ayvsx = a_yvsx, bxvsy = b_xvsy, axvsy = a_xvsy))
+  }
+```
+Now we have to *unlist* those stats and pull just the ones we want out:
+```{r}
+ow2.nadir.dtm.stats <- unlist(gmfr.stats(dtm.ow2.nadir$OW2_sfm_nadir, dtm.ow2.nadir$OW2_als)[c("ac","nrmsd","rsq","rmsd","xmean","ymean","xrange","yrange","xstdev","ystdev","byvsx","ayvsx","bxvsy","axvsy")])
+```
+Now that we have some statistics on how well these two DTMs match, lets plot a figure that helps us explain those stats using ggplot2. The *get_density* function below creates a color scheme that colorizes points on our figure by the density of its surrounding points.
+```{r}
+get_density <- function(x, y, ...) {
+  dens <- MASS::kde2d(x, y, ...)
+  ix <- findInterval(x, dens$x)
+  iy <- findInterval(y, dens$y)
+  ii <- cbind(ix, iy)
+  return(dens$z[ii])
+}
+# dtm ow2 nadir plot
+dtm.ow2.nadir$density <- get_density(dtm.ow2.nadir$OW2_als, dtm.ow2.nadir$OW2_sfm_nadir, n =100)
+dtm.ow2.nadir.plt <- ggplot(dtm.ow2.nadir, aes(x = OW2_als, y = OW2_sfm_nadir, color = density))+
+  geom_point(aes(OW2_als, OW2_sfm_nadir, color = density)) + scale_color_viridis()+
+  labs(x="ALS", y="SfM", title="OW2 DTM (m)")+
+  geom_abline(intercept = 0, slope = 1, colour = 'black')+
+  geom_abline(intercept = ow2.nadir.dtm.stats[18], slope = ow2.nadir.dtm.stats[17], colour = 'red')+
+  annotate("text", x = 345, y = 370, label = "r^2 = 0.997")+
+  annotate("text", x = 345, y = 368, label = "nrmsd = 0.013")+
+  annotate("text", x = 345, y = 366, label = "ACsys = 0.997")+
+  annotate("text", x = 345, y = 364, label = "ACuns = 0.997")+
+  theme(axis.line = element_line(colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank(), 
+        panel.border = element_rect(colour = "black", fill=NA))
+dtm.ow2.nadir.plt
+```
+This is an example of how to creat one site, however, notebooks lets you manage and publish multiple sites within an organization. As an orgazization, you can push, pull and host these documents so that everyone in the lab can help manage or update websites as required. Here is an example of a much prettier and more interactive site made with Markdaown and notebooks: [CRAN Download Monitor](https://gallery.shinyapps.io/cran-gauge/?_ga=2.172678881.317911330.1612937166-1766845382.1612937166)
+![](https://media.giphy.com/media/LmNwrBhejkK9EFP504/giphy.gif)
